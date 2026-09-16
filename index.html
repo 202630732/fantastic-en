@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>빡침 해소 2D 액션 잡도리 ⚔️</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body {
+            background-color: #0f172a;
+            color: #fff;
+            font-family: 'Pretendard', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        .ui-header {
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .ui-header h1 {
+            font-size: 1.5rem;
+            color: #ef4444;
+            text-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+        }
+        .ui-header p {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+        canvas {
+            background: #1e293b;
+            border: 3px solid #334155;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            cursor: crosshair;
+        }
+        .controls-info {
+            margin-top: 12px;
+            display: flex;
+            gap: 15px;
+            font-size: 0.85rem;
+            color: #cbd5e1;
+            background: rgba(255,255,255,0.05);
+            padding: 8px 16px;
+            border-radius: 20px;
+        }
+        .key {
+            background: #475569;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: bold;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+
+<div class="ui-header">
+    <h1>⚔️ 빡치는 놈 직접 때려잡기</h1>
+    <p>다가오는 빡침 빌런들을 몽둥이로 때려잡고 스트레스를 날리세요!</p>
+</div>
+
+<canvas id="gameCanvas" width="700" height="450"></canvas>
+
+<div class="controls-info">
+    <span>이동: <span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> / <span class="key">방향키</span></span>
+    <span>휘두르기: <span class="key">Space</span> 또는 <span class="key">마우스 좌클릭</span></span>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// 게임 상태 변수
+let score = 0;
+let gameOver = false;
+const keys = {};
+
+// 플레이어 설정
+const player = {
+    x: canvas.width / 2,
+    y: canvas.height / 2,
+    radius: 18,
+    speed: 4,
+    hp: 100,
+    maxHp: 100,
+    angle: 0,
+    isAttacking: false,
+    attackAngle: 0,
+    attackTimer: 0
+};
+
+// 적(빡침 빌런) 배열
+let enemies = [];
+const enemyTypes = [
+    { emoji: '😡', speed: 1.5, hp: 1, name: '빌런 A' },
+    { emoji: '🤬', speed: 2.2, hp: 2, name: '빌런 B' },
+    { emoji: '🤡', speed: 1.0, hp: 4, name: '진상' }
+];
+
+// 타격 파티클 효과
+let particles = [];
+let damageTexts = [];
+
+// 키 이벤트 리스너
+window.addEventListener('keydown', e => { keys[e.code] = true; });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    player.angle = Math.atan2(my - player.y, mx - player.x);
+});
+canvas.addEventListener('mousedown', () => { triggerAttack(); });
+window.addEventListener('keydown', e => {
+    if (e.code === 'Space') triggerAttack();
+    if (e.code === 'KeyR' && gameOver) resetGame();
+});
+
+function triggerAttack() {
+    if (player.isAttacking || gameOver) return;
+    player.isAttacking = true;
+    player.attackTimer = 10; // 공격 유지 프레임
+    playHitSound(300, 100);
+}
+
+// 오디오 생성기 (타격음)
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playHitSound(startFreq, endFreq) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.frequency.setValueAtTime(startFreq, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(endFreq, audioCtx.currentTime + 0.1);
+    gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.1);
+}
+
+// 적 생성 루틴
+function spawnEnemy() {
+    if (gameOver) return;
+    const type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+    let x, y;
+    if (Math.random() < 0.5) {
+        x = Math.random() < 0.5 ? -20 : canvas.width + 20;
+        y = Math.random() * canvas.height;
+    } else {
+        x = Math.random() * canvas.width;
+        y = Math.random() < 0.5 ? -20 : canvas.height + 20;
+    }
+    enemies.push({ x, y, radius: 18, hp: type.hp, maxHp: type.hp, speed: type.speed, emoji: type.emoji });
+}
+setInterval(spawnEnemy, 1200);
+
+// 메인 게임 루프
+function update() {
+    if (gameOver) return;
+
+    // 플레이어 이동
+    if ((keys['KeyW'] || keys['ArrowUp']) && player.y > player.radius) player.y -= player.speed;
+    if ((keys['KeyS'] || keys['ArrowDown']) && player.y < canvas.height - player.radius) player.y += player.speed;
+    if ((keys['KeyA'] || keys['ArrowLeft']) && player.x > player.radius) player.x -= player.speed;
+    if ((keys['KeyD'] || keys['ArrowRight']) && player.x < canvas.width - player.radius) player.x += player.speed;
+
+    // 공격 타이머
+    if (player.isAttacking) {
+        player.attackTimer--;
+        if (player.attackTimer <= 0) player.isAttacking = false;
+    }
+
+    // 적 이동 및 충돌
+    enemies.forEach((enemy, index) => {
+        const dx = player.x - enemy.x;
+        const dy = player.y - enemy.y;
+        const dist = Math.hypot(dx, dy);
+
+        // 플레이어를 향해 추적
+        enemy.x += (dx / dist) * enemy.speed;
+        enemy.y += (dy / dist) * enemy.speed;
+
+        // 플레이어 타격 범위 체크 (공격 시)
+        if (player.isAttacking) {
+            const attackRange = 55;
+            if (dist < attackRange + enemy.radius) {
+                enemy.hp--;
+                playHitSound(150, 40);
+                
+                // 넉백 효과
+                enemy.x -= (dx / dist) * 25;
+                enemy.y -= (dy / dist) * 25;
+
+                // 텍스트 & 파티클 연출
+                createHitEffects(enemy.x, enemy.y);
+
+                if (enemy.hp <= 0) {
+                    enemies.splice(index, 1);
+                    score += 100;
+                }
+            }
+        }
+
+        // 플레이어 피격 체크
+        if (dist < player.radius + enemy.radius) {
+            player.hp -= 0.5;
+            if (player.hp <= 0) {
+                player.hp = 0;
+                gameOver = true;
+            }
+        }
+    });
+
+    // 파티클 업데이트
+    particles.forEach((p, i) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.alpha -= 0.03;
+        if (p.alpha <= 0) particles.splice(i, 1);
+    });
+
+    damageTexts.forEach((t, i) => {
+        t.y -= 1;
+        t.alpha -= 0.02;
+        if (t.alpha <= 0) damageTexts.splice(i, 1);
+    });
+}
+
+function createHitEffects(x, y) {
+    for (let i = 0; i < 6; i++) {
+        particles.push({
+            x, y,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.5) * 6,
+            color: '#ef4444',
+            alpha: 1
+        });
+    }
+    const words = ["퍽!", "콰직!", "뚝배기!", "찰싹!"];
+    damageTexts.push({
+        x, y,
+        text: words[Math.floor(Math.random() * words.length)],
+        alpha: 1
+    });
+}
+
+function render() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 적 그리기
+    enemies.forEach(enemy => {
+        ctx.font = '24px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(enemy.emoji, enemy.x, enemy.y);
+    });
+
+    // 파티클 그리기
+    particles.forEach(p => {
+        ctx.save();
+        ctx.globalAlpha = p.alpha;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    });
+
+    // 타격 텍스트 그리기
+    damageTexts.forEach(t => {
+        ctx.save();
+        ctx.globalAlpha = t.alpha;
+        ctx.font = 'bold 16px sans-serif';
+        ctx.fillStyle = '#facc15';
+        ctx.fillText(t.text, t.x, t.y);
+        ctx.restore();
+    });
+
+    // 플레이어 그리기 (영웅 이모지)
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.rotate(player.angle);
+    
+    // 공격 무기 연출
+    if (player.isAttacking) {
+        ctx.fillStyle = '#f87171';
+        ctx.beginPath();
+        ctx.arc(20, 0, 30, -Math.PI / 3, Math.PI / 3);
+        ctx.lineTo(0, 0);
+        ctx.fill();
+    }
+
+    ctx.font = '28px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🤠', 0, 0);
+    ctx.restore();
+
+    // UI (점수 및 체력)
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`퇴치한 빡침: ${score}점`, 20, 30);
+
+    // 체력바
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(20, 45, 150, 12);
+    ctx.fillStyle = '#22c55e';
+    ctx.fillRect(20, 45, (player.hp / player.maxHp) * 150, 12);
+
+    // 게임 오버 연출
+    if (gameOver) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = '#ef4444';
+        ctx.font = 'bold 36px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
+
+        ctx.fillStyle = '#fff';
+        ctx.font = '18px sans-serif';
+        ctx.fillText(`최종 점수: ${score}점`, canvas.width / 2, canvas.height / 2 + 20);
+        ctx.fillText('R 키를 눌러 다시 도전하세요!', canvas.width / 2, canvas.height / 2 + 55);
+    }
+}
+
+function resetGame() {
+    player.hp = 100;
+    player.x = canvas.width / 2;
+    player.y = canvas.height / 2;
+    score = 0;
+    enemies = [];
+    gameOver = false;
+}
+
+function gameLoop() {
+    update();
+    render();
+    requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>
